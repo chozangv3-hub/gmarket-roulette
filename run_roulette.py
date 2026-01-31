@@ -1,6 +1,7 @@
 import os
 import time
 import requests
+import re
 from playwright.sync_api import sync_playwright
 
 # --- [설정부] ---
@@ -17,73 +18,77 @@ def send_tg(photo_path, caption):
             requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': caption}, files={'photo': photo}, timeout=20)
     except: pass
 
-def run():
+def get_free_proxies():
+    """무료 프록시 리스트를 가져옵니다."""
+    print("🔎 무료 프록시 리스트 수집 중...")
+    try:
+        # 여러 무료 프록시 API 중 하나 사용
+        response = requests.get("https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all")
+        proxies = response.text.split('\r\n')
+        return [p for p in proxies if p]
+    except:
+        return []
+
+def run_with_proxy(proxy):
+    """특정 프록시를 사용하여 룰렛 실행"""
     with sync_playwright() as p:
-        # 한국인 브라우저처럼 위장하여 접속
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            locale="ko-KR",
-            timezone_id="Asia/Seoul",
-            viewport={'width': 1920, 'height': 2000}
-        )
-        page = context.new_page()
-
+        print(f"🚀 프록시 시도 중: {proxy}")
         try:
-            # 1. 로그인 페이지 접속
-            print("🌐 1. 로그인 페이지 접속")
-            page.goto("https://signin.gmarket.co.kr/login/login")
-            time.sleep(7)
+            # 프록시 설정 적용
+            browser = p.chromium.launch(headless=True, proxy={"server": f"http://{proxy}"})
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                locale="ko-KR"
+            )
+            page = context.new_page()
+            
+            # 접속 테스트 (타임아웃 30초)
+            page.goto("https://signin.gmarket.co.kr/login/login", timeout=30000)
+            time.sleep(5)
 
-            # 2. [순수 키 입력] ID -> Tab -> Tab -> PW
-            print("⌨️ 2. 키 입력 시퀀스 시작")
-            page.keyboard.type(USER_ID, delay=100) # 사람처럼 보이게 딜레이 추가
-            time.sleep(1)
+            # 키 입력 및 로그인
+            page.keyboard.type(USER_ID, delay=100)
             page.keyboard.press("Tab")
             time.sleep(0.5)
             page.keyboard.press("Tab")
-            time.sleep(1)
+            time.sleep(0.5)
             page.keyboard.type(USER_PW, delay=100)
-            time.sleep(2)
-
-            # 📸 엔터 전 스크린샷
-            page.screenshot(path="before_enter.png")
-            send_tg("before_enter.png", "🔑 엔터 입력 직전 화면")
-
-            # 엔터 입력
-            page.keyboard.press("Enter")
-            print("⏳ 3. 로그인 처리 대기 (20초)")
-            time.sleep(20)
-
-            # 📸 로그인 후 결과 스크린샷
-            page.screenshot(path="after_login.png")
-            send_tg("after_login.png", "✅ 로그인 시도 후 결과")
-
-            # 3. 룰렛 페이지 이동
-            print("📏 4. 룰렛 페이지 이동")
-            page.goto("https://mobile.gmarket.co.kr/Pluszone")
-            time.sleep(10)
             
-            # 📸 룰렛 페이지 도착 확인
-            page.screenshot(path="roulette_page.png")
-            send_tg("roulette_page.png", "🎡 룰렛 페이지 도착")
+            page.screenshot(path="check_proxy.png")
+            # 텔레그램으로 현재 프록시 접속 화면 전송 (확인용)
+            send_tg("check_proxy.png", f"🌐 프록시({proxy}) 접속 확인")
 
-            # 4. 좌표 타격 (180, 626)
-            print("🎯 5. 좌표 클릭")
-            page.mouse.click(180, 626)
-            time.sleep(5)
+            page.keyboard.press("Enter")
+            time.sleep(15)
 
-            # 📸 최종 결과 촬영
-            page.screenshot(path="final_result.png")
-            send_tg("final_result.png", "🎉 최종 룰렛 결과")
-
+            # 캡차 여부 확인 및 룰렛 이동
+            if "signin" not in page.url:
+                print("✅ 로그인 성공! 룰렛 이동")
+                page.goto("https://mobile.gmarket.co.kr/Pluszone")
+                time.sleep(10)
+                page.mouse.click(180, 626)
+                time.sleep(5)
+                page.screenshot(path="success.png")
+                send_tg("success.png", "🎉 프록시 우회 성공 및 룰렛 완료!")
+                browser.close()
+                return True # 성공 시 True 반환
+            else:
+                print("❌ 여전히 캡차 발생 혹은 로그인 실패")
+                browser.close()
+                return False
         except Exception as e:
-            print(f"❌ 에러 발생: {e}")
-            page.screenshot(path="error_capture.png")
-            send_tg("error_capture.png", f"🚨 에러 발생: {str(e)[:50]}")
+            print(f"⚠️ 프록시 연결 실패 혹은 타임아웃: {e}")
+            return False
 
-        finally:
-            browser.close()
+def main():
+    proxies = get_free_proxies()
+    # 상위 20개 프록시만 시도 (무료 프록시는 수백 개지만 대부분 죽어있음)
+    for proxy in proxies[:20]:
+        success = run_with_proxy(proxy)
+        if success:
+            break
+        print("다음 프록시로 재시도합니다...")
+        time.sleep(2)
 
 if __name__ == "__main__":
-    run()
+    main()
