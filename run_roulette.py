@@ -83,7 +83,7 @@ def run_with_proxy(proxy):
 def main():
     proxies = get_free_proxies()
     # 상위 20개 프록시만 시도 (무료 프록시는 수백 개지만 대부분 죽어있음)
-    for proxy in proxies[:20]:
+    for proxy in proxies[:50]:
         success = run_with_proxy(proxy)
         if success:
             break
