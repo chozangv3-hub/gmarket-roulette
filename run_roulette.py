@@ -1,7 +1,6 @@
 import os
 import time
 import requests
-import re
 from playwright.sync_api import sync_playwright
 
 # --- [설정부] ---
@@ -18,77 +17,92 @@ def send_tg(photo_path, caption):
             requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': caption}, files={'photo': photo}, timeout=20)
     except: pass
 
-def get_free_proxies():
-    """무료 프록시 리스트를 가져옵니다."""
-    print("🔎 무료 프록시 리스트 수집 중...")
-    try:
-        # 여러 무료 프록시 API 중 하나 사용
-        response = requests.get("https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all")
-        proxies = response.text.split('\r\n')
-        return [p for p in proxies if p]
-    except:
-        return []
-
-def run_with_proxy(proxy):
-    """특정 프록시를 사용하여 룰렛 실행"""
+def run():
     with sync_playwright() as p:
-        print(f"🚀 프록시 시도 중: {proxy}")
+        # 1. 브라우저 실행
+        browser = p.chromium.launch(headless=True)
+        
+        # 2. 컨텍스트 설정 (한국인 사용자로 완벽 위장)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            locale="ko-KR",
+            timezone_id="Asia/Seoul",
+            viewport={'width': 1920, 'height': 1080}
+        )
+        
+        page = context.new_page()
+
+        # 🕵️‍♂️ [슈퍼 스텔스 핵심] 브라우저 지문 세탁 스크립트
+        # 이 스크립트는 G마켓 보안 프로그램이 '자동화 여부'를 확인할 때 거짓 정보를 줍니다.
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            window.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'languages', {get: () => ['ko-KR', 'ko']});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+            const getParameter = WebGLRenderingContext.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                if (parameter === 37445) return 'Intel Open Source Technology Center';
+                if (parameter === 37446) return 'Mesa DRI Intel(R) HD Graphics 520 (Skylake GT2)';
+                return getParameter(parameter);
+            };
+        """)
+
         try:
-            # 프록시 설정 적용
-            browser = p.chromium.launch(headless=True, proxy={"server": f"http://{proxy}"})
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                locale="ko-KR"
-            )
-            page = context.new_page()
-            
-            # 접속 테스트 (타임아웃 30초)
-            page.goto("https://signin.gmarket.co.kr/login/login", timeout=30000)
-            time.sleep(5)
+            # 1. 로그인 페이지 접속
+            print("🌐 1. 로그인 페이지 접속")
+            page.goto("https://signin.gmarket.co.kr/login/login")
+            time.sleep(7)
 
-            # 키 입력 및 로그인
-            page.keyboard.type(USER_ID, delay=100)
+            # 2. [순수 키 입력] 코랩 방식 유지
+            print("⌨️ 2. 키 입력 시퀀스 시작 (슈퍼 스텔스 모드)")
+            # 키보드 타입 시 delay를 주어 사람이 직접 치는 속도를 흉내냅니다.
+            page.keyboard.type(USER_ID, delay=120) 
+            time.sleep(1)
             page.keyboard.press("Tab")
-            time.sleep(0.5)
+            time.sleep(0.8)
             page.keyboard.press("Tab")
-            time.sleep(0.5)
-            page.keyboard.type(USER_PW, delay=100)
-            
-            page.screenshot(path="check_proxy.png")
-            # 텔레그램으로 현재 프록시 접속 화면 전송 (확인용)
-            send_tg("check_proxy.png", f"🌐 프록시({proxy}) 접속 확인")
+            time.sleep(1)
+            page.keyboard.type(USER_PW, delay=130)
+            time.sleep(2)
 
+            # 📸 엔터 전 스크린샷 (입력 확인)
+            page.screenshot(path="before_enter.png")
+            send_tg("before_enter.png", "🔑 [슈퍼스텔스] 엔터 입력 직전")
+
+            # 엔터 입력
             page.keyboard.press("Enter")
-            time.sleep(15)
+            print("⏳ 3. 로그인 처리 대기 (20초)")
+            time.sleep(20)
 
-            # 캡차 여부 확인 및 룰렛 이동
+            # 📸 로그인 시도 후 결과 스크린샷
+            page.screenshot(path="after_login.png")
+            send_tg("after_login.png", "✅ 로그인 시도 후 화면 (캡차 여부 확인)")
+
+            # 3. 룰렛 페이지 이동 시도
+            # URL에 'signin'이 남아있으면 로그인 실패(캡차 등)로 판단
             if "signin" not in page.url:
-                print("✅ 로그인 성공! 룰렛 이동")
+                print("📏 4. 룰렛 페이지 이동")
                 page.goto("https://mobile.gmarket.co.kr/Pluszone")
                 time.sleep(10)
+                
+                # 룰렛 좌표 클릭 (180, 626)
+                print("🎯 5. 좌표 클릭")
                 page.mouse.click(180, 626)
                 time.sleep(5)
-                page.screenshot(path="success.png")
-                send_tg("success.png", "🎉 프록시 우회 성공 및 룰렛 완료!")
-                browser.close()
-                return True # 성공 시 True 반환
-            else:
-                print("❌ 여전히 캡차 발생 혹은 로그인 실패")
-                browser.close()
-                return False
-        except Exception as e:
-            print(f"⚠️ 프록시 연결 실패 혹은 타임아웃: {e}")
-            return False
 
-def main():
-    proxies = get_free_proxies()
-    # 상위 20개 프록시만 시도 (무료 프록시는 수백 개지만 대부분 죽어있음)
-    for proxy in proxies[:50]:
-        success = run_with_proxy(proxy)
-        if success:
-            break
-        print("다음 프록시로 재시도합니다...")
-        time.sleep(2)
+                # 최종 결과 촬영
+                page.screenshot(path="final_result.png")
+                send_tg("final_result.png", "🎉 슈퍼 스텔스 성공! 룰렛 완료")
+            else:
+                print("❌ 여전히 로그인 페이지입니다. (스텔스 실패)")
+
+        except Exception as e:
+            print(f"❌ 에러 발생: {e}")
+            page.screenshot(path="error_capture.png")
+            send_tg("error_capture.png", f"🚨 에러 발생: {str(e)[:50]}")
+
+        finally:
+            browser.close()
 
 if __name__ == "__main__":
-    main()
+    run()
